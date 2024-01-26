@@ -66,7 +66,7 @@ function prepare() {
     make clean
     #if [[ -e $working_dir ]]; then rm -rf $working_dir; fi
     mkdir -p $output
-    rm -fr  $output/* $working_dir/build_prover_ios_simulator $working_dir/package_ios_simulator \
+    rm -fr  $output/* $working_dir/build_prover_ios* $working_dir/package_ios* \
      $working_dir/depends/gmp/package_*
 }
 
@@ -91,21 +91,54 @@ function build_rapidsnark() {
   mkdir -p $ios_prover_build_dir $ios_prover_package_dir && cd $ios_prover_build_dir
   cmake .. --fresh  -GXcode -DTARGET_PLATFORM=IOS -DCMAKE_INSTALL_PREFIX=../$ios_prover_package_dir
   xcodebuild -destination 'generic/platform=iOS' -scheme rapidsnarkStatic -project rapidsnark.xcodeproj -configuration Debug
-  # need to adjust the ARCHS if building on intel macs
-  xcodebuild  -destination 'generic/platform=iOS' ARCHS=arm64 -project rapidsnark.xcodeproj  -target install -configuration Debug CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGN_ENTITLEMENTS="" CODE_SIGNING_ALLOWED=NO
+  xcodebuild  -destination 'generic/platform=iOS' -project rapidsnark.xcodeproj  -target install -configuration Debug CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGN_ENTITLEMENTS="" CODE_SIGNING_ALLOWED=NO
   cd ../
   
   echo '========== ========== ========== ========== ========== =========='
   echo "Building library for rapidsnark for iOS Simulator"
-  ios_simulator_prover_build_dir=$working_dir/build_prover_ios_simulator
-  mkdir -p $ios_simulator_prover_build_dir $ios_simulator_prover_package_dir && cd $ios_simulator_prover_build_dir
-  cmake .. --fresh -GXcode -DTARGET_PLATFORM=IOS_SIMULATOR -DCMAKE_INSTALL_PREFIX=../$ios_simulator_prover_package_dir -DUSE_ASM=NO
-  xcodebuild ARCHS=arm64  -destination 'generic/platform=iOS Simulator' -sdk iphonesimulator -scheme rapidsnarkStatic -project rapidsnark.xcodeproj 
-  # need to adjust the ARCHS if building on intel macs
-  xcodebuild  ARCHS=arm64  -destination 'generic/platform=iOS Simulator' -sdk iphonesimulator -project rapidsnark.xcodeproj  -target install -configuration Debug CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGN_ENTITLEMENTS="" CODE_SIGNING_ALLOWED=NO
-  cd ../
+  build_for_ios_simulator
 }
 
+function build_for_ios_simulator()
+{
+  include_dirs=()
+  pkg_dirs=()
+	#for ARCH in "arm64" "x86_64"; do
+  
+	for ARCH in "arm64" "x86_64"; do
+		
+		BUILD_DIR="${working_dir}/build_prover_ios_simulator_${ARCH}"
+		PACKAGE_DIR="${ios_simulator_prover_package_dir}_${ARCH}"
+    pkg_dirs+=("${PACKAGE_DIR}")
+    include_dirs+=("${PACKAGE_DIR}/include")
+    
+		if [ -d "$PACKAGE_DIR" ]; then
+			echo "iPhone Simulator ${ARCH} package is built already. See $PACKAGE_DIR. Skip building this ARCH."
+			continue
+		fi
+
+		rm -rf "$BUILD_DIR"
+		mkdir -p "$BUILD_DIR" "$PACKAGE_DIR"
+		cd "$BUILD_DIR"
+
+    cmake .. --fresh -GXcode -DTARGET_PLATFORM=IOS_SIMULATOR_${ARCH} -DCMAKE_INSTALL_PREFIX=../$PACKAGE_DIR -DUSE_ASM=NO
+    xcodebuild -destination 'generic/platform=iOS Simulator' -sdk iphonesimulator -scheme rapidsnarkStatic -project rapidsnark.xcodeproj 
+    xcodebuild  -destination 'generic/platform=iOS Simulator'  ARCHS=${ARCH} ONLY_ACTIVE_ARCH=NO -sdk iphonesimulator -project rapidsnark.xcodeproj  -target install -configuration Debug CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGN_ENTITLEMENTS="" CODE_SIGNING_ALLOWED=NO
+		cd ..
+	done
+  
+  fat_pkg_dir="${working_dir}/package_ios_simulator"
+  fat_lib_dir="${fat_pkg_dir}/lib"
+  
+	mkdir -p "${fat_lib_dir}" 
+  
+  for lib in "libfq.a" "libfr.a" "libgmp.a" "librapidsnark.a";
+  do
+  	lipo "${pkg_dirs[0]}/lib/${lib}" "${pkg_dirs[1]}/lib/${lib}" -create -output "${fat_lib_dir}/${lib}"
+  	echo "Wrote universal fat library for iPhone Simulator arm64/x86_64 to ${fat_lib_dir}/${lib}"
+  done  
+	cp -r "${include_dirs[0]}" "${fat_pkg_dir}"
+}
 
 function make_framework() {
 
